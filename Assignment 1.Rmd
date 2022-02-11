@@ -1,0 +1,290 @@
+---
+title: "Assignment 1"
+author: "Elliot Spears"
+output: md_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      error = FALSE,
+                      warning = FALSE)
+
+```
+
+```{r load-packages, include = FALSE}
+library(tidyverse)
+library(ggplot2)
+library(mosaic)
+library (knitr)
+library(caret)
+library(foreach)
+library(FNN)
+library(rsample)
+library(modelr)
+library(class)
+library(quantmod)
+```
+
+# Question 1
+
+For selfish reasons, I simply want to find out which airline has had both the most cancellations and the most delays over the years so that I can avoid flying with them.
+
+```{r}
+ABIA <- read_csv("ABIA.csv")
+
+Airline_Cancel = ABIA%>%
+  group_by(UniqueCarrier)%>%
+  summarize(total_cancel = count(Cancelled))
+
+
+ggplot(Airline_Cancel)+
+  geom_col(aes(x=factor(UniqueCarrier), y=total_cancel))+
+  labs(x = "Airline ID", "Cancelled Flights", title = "Cumulative Cancelled Flights by Airline" )
+```
+American Airlines has a shockingly large amount of total cancellations compared to other airlines.
+```{r}
+Dest_Cancel = ABIA%>%
+  group_by(Dest)%>%
+  summarize(total_cancel = count(Cancelled))%>%
+  top_n(n=10, wt = total_cancel)
+
+ggplot(Dest_Cancel)+
+  geom_col(aes(x=factor(Dest), y=total_cancel))+
+  labs(x = "Destination", y = "Cancelled Flights", title = "Cumulative Cancelled Flights by Destination")
+```
+El Paso, TX has the most cancellations, along with San Francisco, CA and Nashville, TN.
+
+```{r}
+AA_Flight_Freq = ABIA%>%
+  group_by(Dest)%>%
+  filter(UniqueCarrier == "AA")%>%
+  summarize(total_flights = count(Dest))
+  
+ 
+ggplot(AA_Flight_Freq)+
+  geom_col(aes(x=Dest, y=total_flights))+
+  labs(x= "Total Flights", y = "Destination", title = "Top Flight Destinations for AA")+
+  coord_flip()
+```
+It appears that neither El Paso, nor San Francisco, nor Nashville appear on the most frequent destinations for AA, which would have explained their disproportionately high amount of cancellations.
+```{r}
+Delays = ABIA %>%
+  group_by(UniqueCarrier)%>%
+  summarize(total_delay = count(CarrierDelay))
+
+ggplot(Delays)+
+  geom_col(aes(x=factor(UniqueCarrier), y=total_delay))+
+  labs(x = "Airline ID", y = "Cumulative Delay Time", title= "Cumulative Delay Time by Airline")
+
+```
+American Airlines has by far the most cancellations of any airline and the second most cumulative carrier delay time. This second place is much larger than the airline that took third place in carrier delay time. This data suggests that I should avoid American Airlines.
+
+I attempted to test whether these issues with AA flights being delayed and cancelled so often can be explained by the destinations AA flies to most often. The plots above show the destinations with the most cancellations, none of which appear on the list of destinations AA flies to most often. Hence, I don't have a good explanation for their shortcomings. All I can conclude with the information I've dug up is that I'll continue to fly United.
+
+
+# Question 2 Part A)
+
+```{r}
+billboard<-read.csv("billboard.csv")
+
+billboard %>%
+  group_by(performer, song)%>%
+  summarize (count = n() )%>%
+  arrange(desc(count))%>%
+  head(10)%>%
+  kable(col.names = str_to_title(names(.)), title = "Weeks in Top 100 since 1958")
+```
+It looks like our forefathers had a wider breadth of taste in music. Most of these songs were released within the past 15 years, which indicates that we play the same songs to death more than our predecessors.
+
+# Part B
+
+```{r}
+year_totals = billboard%>%
+  filter(year > 1958 & year < 2021)%>%
+  group_by(year)%>%
+  summarize(song_count = length(unique(song_id)))%>%
+  arrange(desc(song_count))
+
+ggplot(year_totals)+
+  geom_line(aes(x = year, y = song_count))+
+  labs(x = "Year", y = "Songs", title = "Count of Unique Songs by Year from 1959-2020")
+```
+We hit a historical low in the early 2000s in terms of diversity of music that we listened to, which isn't surprising since N-Sync, Backstreet Boys, and Brittany Spears utterly dominated the music industry at that time. Again, it looks like we are getting back on track to enjoying more songs as there has been a large spike in music funneling in and out of the top charts in recent years.
+
+# Part C  
+```{r}
+
+Ten_Weeks = billboard %>%
+  group_by(performer, song)%>%
+  filter(weeks_on_chart >= 10)%>%
+  summarize(count = n())%>%
+  arrange(desc(count))
+
+newz = Ten_Weeks%>%
+  group_by(performer)%>%
+  summarize(count = n())%>%
+  top_n(n=19, wt = count)
+
+ggplot(newz)+
+  geom_col(aes(x=performer, y=count))+
+  labs(x = "Number of 10-week hits", y = "Artist Name", title = "Artists with over 30 10-week hits or more")+
+  coord_flip()
+  
+```
+Elton John is the least surprising in terms of who made it onto this list. If you look up his music on spotify or apple music, you will be amazed how many hits that man has created. I'm happy to see several country artists on this chart as it is the superior genre of music in America.
+  
+# Question 3 Part A
+
+```{r}
+olympics_top_20 <- read.csv("olympics_top_20.csv")
+
+olympics_top_20 %>%
+  filter(sport == "Athletics", sex == "F") %>%
+  group_by(event) %>%
+  summarize(NineFive_Perc = quantile(height, 0.95)) %>% 
+  arrange(desc(NineFive_Perc)) %>% 
+  kable(col.names = c("Athletic Event", "Height in cm"))
+
+```
+Clearly the tallest women are those that are in events that require the most physical strength. This isn't surprising as taller people are able to pack more muscle onto their frames than shorter people and, hence, the former are able to become stronger than the latter.
+
+# Question 3 Part B
+
+
+```{r}
+
+olympics_top_20%>%
+  filter(sex == "F")%>%
+  group_by(event)%>%
+  summarize(sd_height = sd(height))%>%
+  arrange(desc(sd_height))%>%
+  kable(col.names=c("Athletic Event", "SD in Height"))
+
+```
+
+Upon browsing through the data, the "Rowing Women's Coaxed Fours" event had the highest standard deviation in history for female heights.
+
+# Question 3 Part C
+
+
+```{r}
+
+avg_ages = olympics_top_20%>%
+  group_by(sex, year)%>%
+  summarize(yearly_average_age = mean(age))
+
+
+ggplot(avg_ages)+
+  geom_line(aes(x=year, y=yearly_average_age, color = sex))+
+  labs(x = "Year", y = "Average Age of Competitor by Sex", title = "Changes in Average Ages of Olympic Competitors since 1896")
+
+```
+
+
+It appears to be the case that there was a greater disparity in ages of competitors as we go further into the past. Women began competing in the olympics in the 20s. From there, men were, on average, consistently older than women all the way up to about the mid 1990s. As we continue from 1896 until today, the gap in average ages seems to have shrunk and the average age range is converging to around 26 years old on average for women and 28 years old for men.
+
+
+# Question 4 Part
+
+```{r, fig.width=4, fig.asp = 0.6, fig.align='center', echo=FALSE, message=FALSE, warning=FALSE}
+
+sclass<-read.csv("sclass.csv")
+Model_350 = sclass%>%
+  filter(trim=='350')
+
+Model_63 = sclass%>%
+  filter(trim=='63 AMG')
+
+#KNN for S350 with 10 different tests. Justification of choice K further below
+rmse_out1 = foreach(i=1:10, .combine='c') %do% {
+sclass_split1 = initial_split(Model_350, prop = 0.8)
+sclass_train1 = training(sclass_split1)
+sclass_test1 = testing(sclass_split1)
+
+knn_model1 = knnreg(price ~ mileage, data = sclass_train1, k=13)
+modelr::rmse(knn_model1, sclass_test1)
+}
+rmse_out1
+
+#KNN for S63 AMG with 10 different tests. Justification of choice K further below.
+rmse_out_2 = foreach(i=1:10, .combine='c') %do%{
+sclass_split2 = initial_split(Model_63, prop = 0.8)
+sclass_train2 = training(sclass_split2)
+sclass_test2 = testing(sclass_split2)
+
+knn_model2 = knnreg(price ~ mileage, data = sclass_train2, k=51)
+modelr::rmse(knn_model2, sclass_test2)
+}
+rmse_out_2
+
+k_seq = seq(2,150)
+                     
+folds = 5
+Fold_1 = crossv_kfold(Model_350, k = folds)
+Fold_2 = crossv_kfold(Model_63, k=folds)                     
+
+Model_350_corr = foreach(k = k_seq, .combine = 'rbind') %do% {
+  knn_350 = map(Fold_1$train, ~ knnreg(price ~ mileage,k=k, data=., use.all=F))
+  rmse1 = map2_dbl(knn_350, Fold_1$test, modelr::rmse)
+  c(k=k, rmse = mean(rmse1))
+} %>% as.data.frame
+
+#Plot of optimal K for S350
+Model_350_corr %>%
+  ggplot(aes(x = k, y = rmse)) +
+  geom_line(size = 3, color = "red") + 
+  labs(x = "K Values", y = "RMSE", title = "S350 Trim RMSE/K plot")
+
+
+```
+We'll go with K = 13 since the graph bottoms out between 0 and 25. Half of 25 is 12.5, so we'll round up to 13.
+
+```{r}
+
+
+sclass_test1 %>% 
+  mutate(expected_price = predict(knn_model1, sclass_test1)) %>% 
+  ggplot() +
+  geom_point(aes(x = mileage, y = price), size = 1, alpha = 0.5) + 
+  geom_line(aes(x = mileage, y = expected_price), color = "blue", size = 1)+
+  labs(x = "Mileage", y = "Price")
+
+```
+Clearly, the statements about a sharp loss in value the moment you drive off the lot are true as the steepest loss in value comes right after 0. After that point we se a fairly consistent downward trend in price with mileage.
+
+
+```{r}
+Model_63_corr = foreach(k = k_seq, .combine = 'rbind') %do% {
+  knn_63 = map(Fold_2$train, ~ knnreg(price ~ mileage,k=k, data=., use.all=F))
+  rmse2 = map2_dbl(knn_63, Fold_2$test, modelr::rmse)
+  c(k=k, rmse = mean(rmse2))
+} %>% as.data.frame
+
+
+Model_63_corr %>% 
+  ggplot(aes(x = k, y = rmse)) +
+  geom_line(size = 1, color = 'red') + 
+  labs(x = "K Values", y = "RMSE", caption = "S63 Trim RMSE/K plot")
+
+```
+
+It appears that this plot bottoms out at about K = 51
+
+```{r}
+
+sclass_test2 %>% 
+  mutate(expect_price = predict(knn_model2, sclass_test2)) %>% 
+  ggplot() +
+  geom_point(aes(x = mileage, y = price), size = 1, alpha = 0.5) + 
+  geom_line(aes(x = mileage, y = expect_price), color = 'pink', size = 1) + 
+  labs(x = "Mileage", y = "Price")
+
+
+```
+
+We see similar behavior in this plot to what we saw in the previous one for the 350: a steep downward trend in price with mileage.
+
+The reason the choices of K are so different for the two trims is simple: the 350 trim is represented by a dataset with far fewer observations than the 63 trim. Some say that a good rule of thumb in making a first pass at estimating the appropriate k value is to take the square root of the observations. Both of those methods were fairly close to the actual K values that we ended up choosing. I conclude that for the 350 and 63 trims, the appropriate K values are 13 and 51, respectively.
+
+tinytex::install_tinytex()
