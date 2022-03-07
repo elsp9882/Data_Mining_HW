@@ -1,0 +1,290 @@
+---
+title: "Assignment 2"
+author: "Elliot Spears"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      error = FALSE,
+                      warning = FALSE)
+
+```
+
+```{r}
+library(tidyverse)
+library(mosaic)
+library(ggplot2)
+library(modelr)
+library(rsample)
+library(FNN)
+library(caret)
+library(knitr)
+library(foreach)
+library(quantmod)
+library(class)
+library(ROCR)
+library(glmnet)
+library(gamlr)
+```
+#Question 1
+```{r}
+## Question 1
+metro <- read_csv("metro.csv")
+
+board_by_month = metro %>%
+  group_by(month, hour_of_day, day_of_week)%>%
+  summarize(avg_board = mean(boarding))
+
+head(board_by_month)
+
+ggplot(board_by_month)+
+  geom_line(aes(x=hour_of_day, y=avg_board, color = month))+
+  facet_wrap(~day_of_week)+
+  labs(x = "Hour of Day", y = "Average Amount of People Boarding", title = "Average Hourly Boardings By Month and Day of Week")
+  
+
+```
+    It appears from this set of graphs that the peak boarding times are very similar across days. The peak seems to be between 4pm and 6pm, which is when many people get off of work. On the weekends this is not quite the case. On Sunday there is a highpoint around noon, which may be explained by people going to brunch or coming home from church.
+    It may be the case that there are less boardings on Mondays in the month of September because labor day always falls on a Monday in September, which drastically reduces the demand for bus rides for that Monday alone, which depresses the mean value of boardings for Mondays in September.
+    One possible explanation as to why boardings are lower on wed/thur/fri in November is because many UT students go home for thanksgiving break on Tuesday, which is the last school day before spring break. For the rest of that one week demand for buses around UT is substantially lower, which again depresses the average value for those days overall in the month of November.
+    
+```{r}
+board_by_temp = metro %>%
+  group_by(month, hour_of_day, day_of_week, temperature)%>%
+  summarize(sum_board = sum(boarding),
+            avg_temp = mean(temperature))
+
+ggplot(board_by_temp)+
+  geom_point(aes(x=temperature, y=sum_board, color = day_of_week %in% c("Sat", "Sun")))+
+  facet_wrap(~hour_of_day)+
+  scale_color_discrete(name="Weekend")+
+  labs(x = "Average Temperature", y = "Average Amount of People Boarding", title = "Average Daily Boardings as Determined by Temperature")
+
+```
+
+    When holding hour of day and weekend status constant, temperature doesn't seem to have a very significant effect upon the number of UT students riding the bus. The lines of best fit going through these points would be fairly horizontal. The biggest determinant of ridership appears to be time of day and day of the week in the previous graph. Temperature does not appear to have much influence upon ridership.
+  
+#Question 2
+```{r}
+## Question 2
+Houses<- read.csv("Houses.csv")
+
+saratoga_split = initial_split(Houses, prop = 0.8)
+saratoga_train = training(saratoga_split)
+saratoga_test = testing(saratoga_split)
+
+my_lm = lm(price ~ lotSize +livingArea+ age +fireplaces+ bedrooms +poly(lotSize^2) + bathrooms + landValue +poly(fireplaces^2)+fireplaces:livingArea+ landValue:lotSize+bedrooms:bathrooms+age:lotSize+centralAir:heating, data=saratoga_train)
+
+coef(my_lm) %>% round(0)
+
+rmse(my_lm, saratoga_test)
+```
+    I was able to get the rmse down to $61280.12 after a few quick adjustments. I didn't want to spend too much time getting it down to the lowest value possible. I just wanted to beat the rmse of the baseline model provided in class.I used polynomials as I expect the partial effect to wear off at some point for those variables. I also included interactions for variables that are best understood in context with other variables.
+
+```{r}
+
+rmse_out1 = foreach(i=1:10, .combine='c') %do% {
+houses_split1 = initial_split(Houses, prop = 0.8)
+houses_train1 = training(houses_split1)
+houses_test1 = testing(houses_split1)
+
+knn_model1 = knnreg(price ~ lotSize + landValue + livingArea + sewer + waterfront+newConstruction, data = houses_train1, k=28)
+modelr::rmse(knn_model1, houses_test1)
+}
+rmse_out1
+mean(rmse_out1)
+
+```
+    I was able to get down to a mean rmse of $71157.28. I started off by incorporating all of the same variables in the previous regression, but the rmse was way higher than the previous model using KNN. The optimal k value turned out to be between 25 and 30. I chose 28 for the lowest rmse. I tampered with several different combinations of variables. The best I could get was 70k rmse with KNN regression.
+
+```{r}
+k_seq = seq(2,150)
+                     
+folds = 5
+Fold_1 = crossv_kfold(Houses, k = folds)
+Normalize = Houses%>%
+  mutate(across(lotSize:rooms, scale))
+normed_fold = crossv_kfold(Normalize, folds)
+
+Houses_corr = foreach(k = k_seq, .combine = 'rbind') %do% {
+  knn_house = map(Fold_1$train, ~ knnreg(price ~ lotSize+livingArea,k=k, data=., use.all=F))
+  rmse1 = map2_dbl(knn_house, Fold_1$test, modelr::rmse)
+  c(k=k, rmse = mean(rmse1))
+} %>% as.data.frame
+
+#Plot of optimal K
+Houses_corr %>%
+  ggplot(aes(x = k, y = rmse)) +
+  geom_line(size = 3, color = "red") + 
+  labs(x = "K Values", y = "RMSE", title = "Houses RMSE/K plot")
+
+```
+    As can be seen in the graph above, the optimal k value for this regression is around 25-30, but closer to 28.
+
+#Question 3
+```{r}
+## Question 3
+credit<- read_csv("credit.csv")
+
+credit_defaults = credit %>% 
+  group_by(history) %>% 
+  summarise(defaultz = mean(Default))
+
+  ggplot(credit_defaults) +
+  geom_bar(aes(x = history, y = defaultz, fill = history),
+           position = "dodge", stat = "identity") +
+  labs(x = "Credit Rating", y = "Default Likelihood",title= "Likelihood of Default Delimited by Credit Rating") +
+  scale_fill_manual(values = c("black", "gold", "white"))
+
+```
+    Here I have created three bar graphs that show default percentage as broken down by credit history. Obviously, there is a problem here. The people that fall into the category of "good" credit have the highest default rate according to the data, which ended up being near 60%. The folks with "terrible" credit have a default rate of about 20%, which is 40% lower than the "good" credit folks. This result doesn't make sense as we would expect the opposite result.
+
+```{r}
+logit_default = glm(Default~duration + amount + installment + age + history + purpose + foreign, data = credit, family = binomial)
+
+logit_default
+
+```
+
+    Clearly, as the credit history worsens, the partial effect of the history variables goes down. Although this result is to be expected, the magnitude of difference does not seem to be what I would expect between poor history and terrible history. There are way too many default samples in the "good" credit history category relative to how many defaults we would expect there to be among such borrowers in the real world. It appears that the analysts oversampled defaults and, hence, created skewed results that do not provide us with an accurate estimation of risk when it comes to probability of default by category. 
+    We need to find out what the default rate is for each category overall before we manipulate the dataset, then we need to make sure that when we match each default with non-default loans we keep the proportion of non-default loans relative to default loans accurate.
+
+
+#Question 4
+```{r}
+## Question 4
+hotels_dev<-read_csv("hotels_dev.csv")
+hotels_val<-read_csv("hotels_val.csv")
+
+hotels_split = initial_split(hotels_dev, prop = 0.8)
+hotels_train = training(hotels_split)
+hotels_test = testing(hotels_split)
+
+base_1 = glm(children ~ market_segment + adults + customer_type + is_repeated_guest, data=hotels_train, family = binomial)
+
+coef(base_1) %>% round(0)
+
+rmse(base_1, hotels_test)
+
+
+```
+Above we have the RMSE that was yielded by the first baseline model.
+
+```{r}
+hotels_split2 = initial_split(hotels_dev, prop = 0.8)
+hotels_train2 = training(hotels_split2)
+hotels_test2 = testing(hotels_split2)
+
+base_2 = glm(children ~ . - arrival_date, data=hotels_train2, family = binomial)
+
+coef(base_2) %>% round(0)
+
+rmse(base_2, hotels_test2)
+
+
+```
+
+The RMSE calculated above is the RMSE of the big model, which includes all possible predictors, with the exception of "arrival_date." The RMSE calculated from the larger model is greater than what we obtained from the smaller baseline model. Next, I will try and build the best possible model that I can.
+
+
+```{r}
+hotels_split3 = initial_split(hotels_dev, prop = 0.8)
+hotels_train3 = training(hotels_split3)
+hotels_test3 = testing(hotels_split3)
+
+base_3 = glm(children ~ stays_in_week_nights + adults + meal + average_daily_rate + adults:average_daily_rate, data=hotels_train3, family = binomial)
+
+coef(base_3) %>% round(0)
+
+rmse(base_3, hotels_test3)
+
+```
+This was the lowest RMSE I could muster. It beats the first baseline model by .02 RMSE points. It includes an interaction between adults and average daily rate as I figured that those variables together may help predict the number of children present.
+
+```{r}
+## Model Validaton Step One
+hotels_split_val = initial_split(hotels_val, prop = 0.8)
+hotels_train_val = training(hotels_split_val)
+hotels_test_val = testing(hotels_split_val)
+
+model_val = glm(children ~ stays_in_week_nights + adults + meal + average_daily_rate + adults:average_daily_rate, data=hotels_train_val, family = binomial)
+
+coef(model_val) %>% round(0)
+
+rmse(model_val, hotels_test_val)
+
+hotels_dev = mutate(hotels_dev, yhat = predict(model_val, hotels_dev, type='response'))
+ggplot(hotels_dev) + 
+  geom_jitter(aes(x=factor(children), y=yhat), width=0.1, alpha=0.2) + 
+  labs(title="Test-set predicted probabilities", y = "P(children | x)", x="Children?") + 
+  stat_summary(aes(x=factor(children), y=yhat), fun='mean', col='red', size=1)
+
+phat_test_model_val = predict(model_val, hotels_dev, type='response')
+yhat_test_model_val = ifelse(phat_test_model_val > 0.5, 1, 0)
+confusion_out_model_val = table(children = hotels_dev$children,
+                            yhat = yhat_test_model_val)
+confusion_out_model_val
+
+phat_test_model_val = predict(model_val, hotels_dev, type='response')
+thresh_grid = seq(0.95, 0.05, by=-0.005)
+roc_curve_children = foreach(thresh = thresh_grid, .combine='rbind') %do% {
+  yhat_test_model_val = ifelse(phat_test_model_val >= thresh, 1, 0)
+  # FPR, TPR for linear model
+  confusion_out_model_val = table(children = hotels_dev$children, yhat = yhat_test_model_val)
+  out_model_val = data.frame(model = "logit",
+                       TPR = confusion_out_model_val[2,2]/sum(hotels_dev$children==1),
+                       FPR = confusion_out_model_val[1,2]/sum(hotels_dev$children==0))
+  
+  rbind(out_model_val)
+} %>% as.data.frame()
+ggplot(roc_curve_children) + 
+  geom_line(aes(x=FPR, y=TPR)) + 
+  labs(title="ROC Curve")
+
+```
+The hotel_val data has validated my previous model as the RMSE it turned out is virtually the same and differs from the previous model by only .002 RMSE points.However, the ROC curve is anything but impressive in terms of our true positive rate that we obtained. This means that my model that I constructed is not a very reliable predictor of whether a guests will be bringing children.
+
+```{r}
+start = (1-sum(hotels_test$children)/nrow(hotels_test)) %>% round(3)*100
+kid1 = hotels_val$children
+kid2 = model.matrix(children ~ (.-arrival_date)^2 -1, data = hotels_val)
+
+Lasso = cv.glmnet(x=kid2, y=kid1, alpha =1, family = "binomial", nfold =20, trace.it=1, standardize = FALSE)
+
+Matrix_test = model.matrix(children ~ (.-arrival_date)^2 -1, data = hotels_val)
+
+val2 = hotels_val %>% pull(children)
+Xs = model.matrix(children ~(.-reserved_room_type)^2-1, data = hotels_test)
+Ys = hotels_test %>% pull(children)
+lasso1 = cv.gamlr(Xs, Ys, family = "binomial")
+pre = predict(lasso1, Xs, select = "min", type = "response")
+pre = prediction(pre, Ys)
+perform = performance(pre,"acc")
+accur = which.max(slot(perform, "y.values")[[1]])
+
+stopz = slot(perform, "x.values")[[1]][accur]
+
+folds = 20
+
+foldz = rep(1:folds, length = nrow(val2)) %>% sample
+
+testing = foreach(fold = 1:20, .combine = "c") %do% {
+  Matrix_test2 = Matrix_test[foldz==fold,]
+  val2_2 = val2[foldz == fold]
+  predictz = predict(Lasso,
+                     newx=Matrix_test2,
+                     select="min",
+                     type = "response")
+  blitz = data.frame(y = val2_2,
+                     y_test = if_else(predictz>stopz, 1,0))
+  (xtabs(~., blitz)%>% diag()%>%sum()/nrow(blitz))
+}
+
+data.frame(Round=rep(1:20),
+          Accuracy = testing %>% round(3)*100)%>%
+  mutate(Better_Than_Original = if_else(Accuracy>start, "Yes",""))%>%
+  kable()
+
+```
+For the last part of the assignment, I tested the model over 20 folds. I've provided a graph to list off the occurrences where the model indicated was better than the baseline.
