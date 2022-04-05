@@ -1,0 +1,240 @@
+---
+title: "Assignment 3"
+author: "Elliot Spears"
+date: "3/28/2022"
+output: pdf_document
+---
+```{r load-packages, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(mosaic)
+library (knitr)
+library(caret)
+library(foreach)
+library(FNN)
+library(rsample)
+library(modelr)
+library(class)
+library(quantmod)
+library(rpart)
+library(rsample)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+library(pdp)
+library(ggmap)
+library(sandwich)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, error=FALSE, warning=FALSE)
+```
+
+# Question 1
+
+   We can't simply run a regression using crime as the LHS variable and the number of cops as the RHS variable because this confounds the question as to "what causes what." Cities that have a lot of police officers tend to have a lot of crime, but the reason there is a lot of crime is not because there are a lot of police officers, it's the other way around: there are a lot of police officers because there is a lot of crime. Hence, running a regression of crime on police officers would indicate that having more police officers has a positive effect on crime rates, which is not true. So we need to control for this factor when investigating this question.
+   The researchers investigated what happens to crime rates in Washington D.C. when there are "high-alert days." Since D.C. is susceptible to terrorist attacks, the city's leadership issues many high-alert warnings every year in order to help hedge against a terrorist attack. In practice, this means that the police presence is increased across D.C. This provides us with an opportunity to see what happens to crime when there is a sudden and large increase in police presence all over the city.They found that on high-alert days, there was a drop in crimes when the high-alert took place, so it appears that more police means less crime, which is what we would expect.
+   The Metro ridership controls for the fact that on high alert days we might expect tourism to decrease and that people might stay home instead of going out on the town, including the criminals. The metro ridership didn't change the sign of the high-alert variable, nor did it drastically effect the magnitude of the coefficient, so the overall result still holds.
+   The model in the first column allow for heteroskedastic errors. It also shows that district 1 had a higher drop in crime on high-alert days than other districts did on average, however the other districts variable was not significant at the 5% level. It also shows that metro ridership actually increased on the high-alert days, this was significant at the 1% level.
+
+# Question 2
+
+   In this question we aim to use CART, random forests, and gradient-boosted trees in order to predict dengue cases based on the features available in the data set. We'll run the various models using the variables that offer the best predictive power and see which one has the lowest RMSE when cross validated against the testing data. We will then create partial dependence plots to illustrate the findings.
+```{r, include=FALSE}
+dengue<-read.csv("dengue.csv")
+dengue %>%  
+  drop_na() %>%
+  mutate(city = factor(city),
+         season = factor(season))
+
+dengue_split = initial_split(dengue, prop = 0.8)
+dengue_train = training(dengue_split)
+dengue_test = testing(dengue_split)
+
+cp_1se = function(my_tree) {
+  out = as.data.frame(my_tree$cptable)
+  thresh = min(out$xerror + out$xstd)
+  cp_opt = max(out$CP[out$xerror <= thresh])
+  cp_opt
+}
+
+prune_1se = function(my_tree) {
+  out = as.data.frame(my_tree$cptable)
+  thresh = min(out$xerror + out$xstd)
+  cp_opt = max(out$CP[out$xerror <= thresh])
+  prune(my_tree, cp=cp_opt)
+}
+
+load.tree = rpart(total_cases ~ ., data=dengue_train,
+                  control = rpart.control(cp = 0.0001, minsplit=5))
+
+pen.tree = prune_1se(load.tree)
+modelr::rmse(load.tree, dengue_test)
+```
+
+```{r, include=FALSE}
+
+forest1 = randomForest(total_cases ~ ., data = dengue_train, importance = T, na.action=na.omit)
+
+modelr::rmse(forest1, dengue_test)
+
+```
+
+
+
+```{r, include=FALSE}
+dengue_train$city<-as.factor(dengue_train$city)
+dengue_train$season<-as.factor(dengue_train$season)
+boost1 = gbm(total_cases~.,
+             data=dengue_train, 
+               interaction.depth=2, n.trees=500, shrinkage=.05)
+
+modelr::rmse(boost1, dengue_test)
+
+```
+   The lowest RMSE is derived from the random forest. Hence, we will use this model to create our partial dependence plots.
+```{r}
+forest2 <- randomForest(total_cases ~.,
+                              data = dengue,
+                              importance = T, na.action = na.omit)
+
+levels(dengue_test$precipitation_amt)=levels(dengue_train$precipitation_amt)
+
+pdp:: partial(forest2, pred.var = "specific_humidity")%>%ggplot()+
+  geom_line(aes(x=specific_humidity, y=yhat))+labs(x="Specific Humidity", y = "Y Hat")
+
+```
+   The above plot demonstrates that once specific humidity reaches about 15 units of grams of water per kilogram of air for the week, we have an increasing number of cases up until about 19 units of grams of water per kilogram of air for the week, at which point the cases begin to level off.
+```{r}
+pdp::partial(forest2, pred.var = "precipitation_amt")%>%ggplot()+
+  geom_line(aes(x=precipitation_amt, y=yhat))+labs(x="Precipitation Amount", y = "Y Hat")
+
+```
+   Above we can see that cases tend to go down when rainfall increases from zero up to about 50 millimeters, at which point the cases begin to increase all the way up to about 200 millimeters, where the cases level out for all additional precipitation amounts.
+
+```{r}
+pdp::partial(forest2, pred.var = "min_air_temp_k")%>%ggplot()+
+  geom_line(aes(x=min_air_temp_k, y=yhat))+labs(x="Minimum Air Temp For Week", y = "Y Hat")
+
+```
+   For the plot I chose the minimum air temperature for the week to see what happens to cases. We would expect really low minimum air temperature weeks to see lower cases as they likely take place in cold months on average. Conversely, we would expect high minimum air temperature weeks to take place in the summer, where mosquitoes are more prevalent. That's exactly what we observe in the graph above.
+
+# Question 3
+```{r, include=FALSE}
+green<-read.csv("green.csv")
+green_split = initial_split(green, prop = 0.8)
+green_train = training(green_split)
+green_test = testing(green_split)
+
+green_forest = randomForest(Rent*leasing_rate ~ ., data = green_train, importance = T, na.action = na.omit)
+rmse(green_forest, green_test) # winner
+
+green_boost = gbm(Rent*leasing_rate~.,
+             data=green_train, 
+               interaction.depth=2, n.trees=500, shrinkage=.05)
+modelr::rmse(green_boost, green_test)
+```
+
+```{r}
+green_lm = lm(Rent*leasing_rate ~ . - net - cluster + age:size + age:renovated + I(age^2) + I(Precipitation^2) + I(stories^2), data=green_train)
+green_lm%>%tidy()%>%kable(digits=2)
+```
+
+```{r, include=FALSE}
+rmse(green_lm, green_test)
+```
+   It looks like the generic forest model takes the cake. In the case of the linear model, we removed the net variable as well as cluster variable, but kept all the other variables plus interactions between age and size, as well as age and renovation status. I also included three quadratics: age, precipitation, and stories. I figured that the effects of those variables die off eventually. This model seems to have the best predictive power. This was the best linear model I could make and it still was bested by the generic forest model by a wide margin.
+   It also appears that electricity costs have the largest effect upon the revenue per square foot per calendar year. The next largest positive effect came from whether or not the building was a "Class A" building. the green rating does not have as large of an effect as we would have expected, nor is it even statistically significant in the linear model, which is problematic since that is the main variable we are trying to estimate. It seems however, based upon the findings from the random forest, that we can likely sign the green rating variable with a positive sign, which means that the green rating variable likely has a positive effect on revenue per square foot per calendar year.The linear model has such a huge standard error compared to the value of the coefficient that this isn't certain, though.
+   We can conclude that while green rating has some mild predictive power for the revenue per square foot per calendar year. If I were a commercial real estate developer building apartments, I would be more concerned with getting my apartment complex the highest class rating possible in order to maximize revenue.
+
+# Question 4
+```{r, include = FALSE}
+ca<-read.csv("ca.csv")
+ca_split = initial_split(ca, prop = 0.8)
+ca_train = training(ca_split)
+ca_test = testing(ca_split)
+
+ca_forest = randomForest(medianHouseValue ~ ., data = ca_train)
+rmse(ca_forest, ca_test)
+
+boost_ca = gbm(medianHouseValue ~ ., data = ca_train, interaction.depth=2, n.trees=500, shrinkage=.05)
+rmse(boost_ca, ca_test)
+
+ca_lm = lm(medianHouseValue ~ ., data = ca_train)
+rmse(ca_lm, ca_test)
+ca_lm%>%tidy()%>%kable(digits=2)
+
+
+ca_forest2 = randomForest(medianHouseValue ~ . + totalRooms:totalBedrooms + I(housingMedianAge^2), data = ca_train)
+rmse(ca_forest2, ca_test)
+
+```
+
+```{r}
+ca_lm%>%tidy()%>%kable(digits=2)
+
+```
+   I tried to tinker with the model a little bit and create my own customized forest with an interaction between rooms and bedrooms, as well and a quadratic terms for median house age, assuming that the age of a house has an increasing, but diminishing effect upon the house value. My custom model turned out to have a slightly lower RMSE when compared to the original "stock" forest model.
+   It appears that median income and the median age of a home have the largest positive effect upon the expected value of a home's value. All of the variables are statistically significant at the 5% level. It is surprising that as median home age increases there is an increase in home value. I don't have an explanation for this as I'm not familiar with the California real estate market, but it certainly is noteworthy. Not surprisingly, the median income of the people that make up the tract has a huge effect upon the expected home value. As you increase income, you increase the size and quality of home that one can afford and, hence, home price/value.
+   Below, we include figures to help the reader get a sense of how home values change with longitude and latitude.
+
+```{r ca-map, include=F}
+
+ca_feat <- c(
+  left = -125,
+  bottom = 31.5,
+  right = -113,
+  top = 42.2
+)
+
+ca_map <- get_stamenmap(bbox = ca_feat, zoom = 6)
+```
+
+```{r}
+
+ggmap(ca_map) +
+  geom_point(
+    data = ca,
+    mapping = aes(
+      x = longitude,
+      y = latitude,
+      color = medianHouseValue
+    )
+  )
+
+
+```
+The above map plots the original data, and provides us with a visual of how median house value changes by longitude and latitude.
+
+```{r}
+Predicted_Value = predict(ca_forest2, ca)
+
+ggmap(ca_map) +
+  geom_point(
+    data = ca,
+    mapping = aes(
+      x = longitude,
+      y = latitude,
+      color = Predicted_Value
+    )
+  )
+
+```
+The above map shows us how my custom forest model helps us predict median home values by longitude and latitude.
+```{r}
+
+new <- ca %>%
+  mutate(residual = medianHouseValue - Predicted_Value)
+
+ggmap(ca_map) +
+  geom_point(
+    data = new,
+    mapping = aes(
+      x = longitude,
+      y = latitude,
+      color = residual
+    )
+  )
+
+```
+This last plot shows the model's errors versus longitude and latitude.
