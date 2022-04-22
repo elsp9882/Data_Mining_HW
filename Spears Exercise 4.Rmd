@@ -1,0 +1,189 @@
+---
+title: "Exercise 4"
+author: "Elliot Spears"
+date: '2022-04-22'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+library(tidyverse)
+library(LICORS)
+library(foreach)
+library(mosaic)
+library("RColorBrewer")
+library(wesanderson)
+library(janitor)
+library(kableExtra)
+library(jtools)
+library(arules)
+library(arulesViz)
+```
+
+# Question 1
+
+   Here we aim to find out if any useful information about wine quality and wine color can be extrapolated by the tools of Principal Components Analysis and Kmeans++. We have data on 6497 different bottles of wine from vinho verde vineyards. We start with Kmeans++ and use it to segregate wines based upon pH levels and color. Then we use it to cluster based upon quality. After that we use PCA in order to test whether it is a better gauge of the relevant relationships. We find that Kmeans++ provides us with more suitable plots for our purposes with this data set.
+
+```{r, include = FALSE}
+wine<- read.csv("wine.csv")
+
+X = wine%>%
+  select(pH:alcohol)%>%
+  scale
+
+colorz = wine$color %>% unique() %>% length()
+clust1 = kmeanspp(X, colorz, nstart = 25)
+
+```
+```{r}
+
+data.frame(cluster = clust1$cluster,
+           color = wine$color) %>% 
+  count(cluster,color) %>% ggplot +
+  geom_histogram(aes(x = factor(cluster), y = n, fill = color),
+           stat = "identity") +
+  labs(x = "Cluster", y = "By Wine Color", title = "Histogram of Clusters Delineated by Color and pH Level")
+```
+
+   We've sorted two clusters that provide us with information on how the different wines are classified when clustered by pH levels. White wine clearly dominates in cluster two. Cluster two probably consists of the less acidic wines, since pH level are higher in red wines, and pH levels are a measure of acidity.
+
+```{r}
+
+qualz <- wine$quality %>% unique() %>% length()
+clust2 <- kmeanspp(X, qualz, nstart = 25)
+SP2<-data.frame(cluster = clust2$cluster, quality = wine$quality) %>% 
+  count(cluster,quality) %>% ggplot +
+  geom_histogram(aes(x = factor(cluster), y = n, fill = quality), stat = "identity") + 
+  labs(x = "Cluster", y = "Wine Quality", title = "Histogram of Clusters Delineated by Quality")
+
+SP2+scale_fill_gradient(low="blue", high="red")
+
+```
+   Again, we have a pretty go segmentation of wines based upon their quality. We have seven clusters. Just by eyeballing, the sixth cluster seems to have the most wins in the 8-9 rating range. Hence, whatever features are used to categorize cluster six would be worth noting to better understand what creates a higher quality wine.
+
+```{r}
+PCA_frame <- wine %>% 
+  select(pH:alcohol) %>% 
+  prcomp(rank=2,
+         center=T,
+         scale=T)
+PCA_frame$x %>% 
+  as.data.frame %>% 
+  cbind(wine %>% select(color)) %>%
+  ggplot +
+  geom_point(aes(x = PC1, y = PC2, color = color))+
+  labs(title = "PCA Plot of Wine Colors")
+
+```
+   Although there is some differentiation here in terms of the red cluster and the white cluster, this plot is virtually useless as there is tremendous overlap between the two right in the middle of the plot.
+
+
+```{r}
+
+PCA_frame$x %>% 
+  as.data.frame %>% 
+  cbind(wine %>% select(quality)) %>% 
+  ggplot + 
+  geom_point(aes(x = PC1, y = PC2, color = quality))+
+  labs(title = "PCA Plot of Quality")
+
+
+```
+
+   Once again, this graph isn't very helpful in enabling us to decipher anything. The pH levels are what we are using to categorize the PC groupings of wine, but it's difficult to extrapolate anything of substance from this plot about the relationship between pH levels and wine quality. Overall, it seems that kmeans++ did a better job of providing us with useful plots and information about the relationship between pH levels, wine quality, and color.
+
+# Question 2
+
+   The purpose of this next analysis is to provide a report for NutrientH20, which identifies any interesting market segments that appear to stand out in their social-media audience.
+   
+```{r, include = FALSE}
+social<- read.csv("social.csv")
+
+social$X = as.numeric(as.factor(social$X))
+
+PCA = social%>%
+  prcomp(rank=5,
+         center=T,
+         scale=T)
+
+TZI <-PCA$rotation %>% 
+  as.data.frame %>% 
+  rownames_to_column() %>% 
+  rename(category = rowname)
+
+mapz <- function(axis) {
+  axis <- enquo(axis)
+  
+  TZI %>%
+    select(category, !!axis) %>% 
+    ggplot +
+    geom_col(aes(x = !!axis, y = fct_reorder(category, !!axis)),
+             fill = "deepskyblue1") +
+    labs(y = "Category")
+}
+
+```
+
+```{r}
+mapz(PC1)
+```
+   Here we see that variables like spam, adult, and online gaming are on the opposite side of the PC spectrum from variables like religion, parenting, and school. It's difficult to gauge what aspect of the data generated this spread, but perhaps "shareable content for the average user" would be a decent approximation of what created this segmentation.
+
+```{r}
+mapz(PC2)
+
+```
+   In this second PCA plot we see that seemingly unrelated categories occupy spaces much closer to one another. Religion and adult are both on the positive end of the spectrum. What could the "ingredient" makeup of this plot be? Well, on the negative side we have categories like: cooking, photo sharing, shopping, fashion, and beauty. On the positive side we have categories like: religion, sports fandom, school, news, and parenting. Perhaps the level of controversy that these tweets stirs up is contributing to the PCA mapping is organized here.
+```{r}
+mapz(PC3)
+```
+   I wanted to produce one more PCA plot. PC3 seems to have more stale topics on the bottom end of the spectrum, whereas more invigorating and fluffy categories makeup the top rungs.
+
+```{r}
+model<- lm(religion~family+politics+news+current_events+school+parenting, data=social)
+
+summ(model)
+```
+
+   Here I created a linear model to try and predict the expected number of posts about, arguably, the most controversial topic in the data set, using the other most controversial topics in the data set. Everything with the exception of the "news" category had a positive effect on the predicted value of number of tweets about religion that a particular subject puts out.
+
+```{r}
+
+model2<- lm(adult~ .-X, data=social)
+
+summ(model2)
+
+```
+   I thought it might be of interest which variables do the most to help predict the amount of posts an account makes for the "adult" category. It appears that "spam" is the strongest predictor, which isn't surprising since spam and adult content are very closely intertwined. Interestingly, the outdoors category has a fairly large and positive predictive value at the 5% level for the predicted number of adult tweets. Since posts with "adult" content probably belong to a certain class of user, it might be helpful for NutrientH20 to know how to target that market using this data.
+   
+# Question 3
+
+   The objective of the next case study is to assist a grocery store in finding some interesting association rules through shopping trends based upon customer basket data. We will help the grocery store see which items are usually purchased in tandem with one another in order to provide the grocer with the necessary information to better organize the way in which they stock their shelves, putting food items in close proximity to each other than are demonstrated through this data to be purchased.
+```{r, include = FALSE}
+groceries<-read.csv("C:/Users/elsp9/OneDrive/Desktop/groceries.txt", header=FALSE)
+
+groceries = lapply(groceries, unique)
+
+
+
+smz = as(groceries, "transactions")
+
+groc_rules = apriori(smz,
+               parameter = list(support=0.01, confidence=0.05, maxlen=3))
+
+num<-3
+
+inspect(subset(groc_rules, lift > num & confidence > 0.05))
+subset(groc_rules, lift > num)
+
+sub1 = subset(groc_rules, subset=confidence > 0.05 & support > 0.005)
+```
+
+```{r}
+plot(head(sub1, 100, by='lift'), method='graph')
+
+```
+   Here we see some examples of items that tend to be purchased together. This can be assessed by proximity and the direction of the vectors. For instance, we see baby food and pot plants are often purchased together. It might not make sense to put these items in the same part of the store, but it is useful information, and perhaps some advertising flyers could be posted in the baby food aisle to target that sort of consumer.
